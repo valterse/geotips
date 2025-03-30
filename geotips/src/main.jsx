@@ -1,14 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import earcut from 'earcut';
 
 //country data
 import chinaConfig from "./Countries/Asia/China.jsx";
 import usaConfig from "./Countries/NorthAmerica/USA.jsx";
 import russiaConfig from "./Countries/Europe/Russia.jsx";
-
-// Optional: You could use the GPUPicker plugin for more accurate picking
-// import { GPUPicker } from 'three-gpupicker';
 
 // Initialize scene
 const scene = new THREE.Scene();
@@ -18,6 +14,20 @@ scene.background = new THREE.Color(0x2e2e2e);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 0, 5);
 
+const textureLoader = new THREE.TextureLoader();
+textureLoader.load(
+    '/assets/output.png',
+    (texture) => {
+        const sphereMaterial = new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            opacity: 0.9,  // Adjust for visibility
+            color: 0x333333  // Dark base for outlines
+        });
+        sphere.material = sphereMaterial;
+    }
+);
+
 // Create renderer
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -26,27 +36,27 @@ document.body.appendChild(renderer.domElement);
 // Earth sphere parameters
 const sphereRadius = 2;
 const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(sphereRadius, 64, 64),
+    new THREE.SphereGeometry(sphereRadius, 32, 32),
     new THREE.MeshStandardMaterial({
         color: 0x3333ff, // Fallback color
-        metalness: 0.3,
-        roughness: 0.8
+        metalness: 0,    // No metallic reflection
+        roughness: 1,    // Fully rough (no specular highlights)
+        flatShading: true // More uniform appearance
     })
 );
 scene.add(sphere);
 
-// Lighting
-scene.add(new THREE.AmbientLight(0xFFFFFF, 0.6));
-const directionalLight = new THREE.DirectionalLight(0xFFF5E6, 0.5);
-directionalLight.position.set(1, 1, 1);
-scene.add(directionalLight);
+// Lighting - Simple uniform lighting
+const ambientLight = new THREE.AmbientLight(0xffffff, 1.0); // Strong ambient light for even illumination
+scene.add(ambientLight);
+
+
 
 // Create a group for all country outlines
 const countriesGroup = new THREE.Group();
 scene.add(countriesGroup);
 
-
-// Country outlines creation function
+// Country outlines creation function (unchanged)
 const createCountryOutlines = (geojson, radius) => {
     const countryMeshes = [];
 
@@ -60,8 +70,8 @@ const createCountryOutlines = (geojson, radius) => {
     // Helper function to interpolate between two points with reduced segments
     const interpolatePoints = (start, end, segments) => {
         const points = [];
-        // Only add start point (end point will be added by next segment)
         points.push(start);
+        points.push(end); // Add the end point as well
         return points;
     };
 
@@ -72,9 +82,10 @@ const createCountryOutlines = (geojson, radius) => {
                 const segments = 0; // No additional points between vertices
                 const step = 1; // step size for points
 
-                for (let i = 0; i < ring.length - 1; i += step) {
+                for (let i = 0; i < ring.length; i += step) {
                     const start = ring[i];
-                    const end = ring[i + 1] || ring[0]; // Handle wrap-around
+                    // For the last point, connect back to the first point
+                    const end = ring[(i + 1) % ring.length];
 
                     // Get interpolated points between current and next point
                     const interpolated = interpolatePoints(start, end, segments);
@@ -173,139 +184,13 @@ const createCountryOutlines = (geojson, radius) => {
     return countryMeshes;
 };
 
-// Function to create filled polygons for specific countries
-const createFilledCountries = (geojson, radius, countryCodes) => {
-    // Import colors from specific paths
-    const defaultColor = new THREE.Color(0xFFFACD);
-
-    const getCountryColor = (countryCode) => {
-        switch(countryCode) {
-            case 'US': return new THREE.Color(usaConfig.color);
-            case 'CN': return new THREE.Color(chinaConfig.color);
-            case 'RU': return new THREE.Color(russiaConfig.color);
-            default: return defaultColor;
-        }
-    };
-
-    const fillMaterial = new THREE.MeshStandardMaterial({
-        color: defaultColor,
-        transparent: true,
-        opacity: 1, // Set opacity to 1 as requested
-        side: THREE.DoubleSide,
-        metalness: 0.1,
-        roughness: 0.7,
-    });
-
-    // Recursive function to subdivide triangles
-    const subdivideTriangle = (p0, p1, p2, depth) => {
-        if (depth <= 0) return [p0, p1, p2];
-
-        // Calculate midpoints
-        const p3 = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2];
-        const p4 = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
-        const p5 = [(p2[0] + p0[0]) / 2, (p2[1] + p0[1]) / 2];
-
-        // Recursively subdivide the 4 new triangles
-        const triangles = [];
-        triangles.push(...subdivideTriangle(p0, p3, p5, depth - 1));
-        triangles.push(...subdivideTriangle(p3, p1, p4, depth - 1));
-        triangles.push(...subdivideTriangle(p5, p4, p2, depth - 1));
-        triangles.push(...subdivideTriangle(p3, p4, p5, depth - 1));
-
-        return triangles;
-    };
-
-    geojson.features.forEach(country => {
-        const countryCode = country.properties.iso_a2;
-        if (countryCode && countryCodes.includes(countryCode)) {
-            const coordinates = country.geometry.coordinates;
-            const isMultiPolygon = country.geometry.type === 'MultiPolygon';
-            const polygons = isMultiPolygon ? coordinates : [coordinates];
-
-            const fillGroup = new THREE.Group();
-            fillGroup.userData = {
-                country: country.properties.name,
-                countryCode: countryCode,
-            };
-
-            // Create material with country-specific color
-            const countryMaterial = fillMaterial.clone();
-            countryMaterial.color.copy(getCountryColor(countryCode));
-
-            polygons.forEach(polygon => {
-                polygon.forEach((ring, ringIndex) => {
-                    if (ringIndex !== 0) return; // Skip holes for simplicity
-
-                    // Flatten coordinates for Earcut
-                    const flattened = [];
-                    for (let i = 0; i < ring.length; i++) {
-                        flattened.push(ring[i][0], ring[i][1]);
-                    }
-
-                    // Triangulate with Earcut
-                    const indices = earcut(flattened);
-
-                    // Subdivide triangles with 3 levels of recursion for smoothness
-                    const subdivisionDepth = 3;
-                    const subdividedPositions = [];
-
-                    for (let i = 0; i < indices.length; i += 3) {
-                        const i0 = indices[i] * 2;
-                        const i1 = indices[i + 1] * 2;
-                        const i2 = indices[i + 2] * 2;
-
-                        // Get original lat/lon points
-                        const p0 = [flattened[i0], flattened[i0 + 1]];
-                        const p1 = [flattened[i1], flattened[i1 + 1]];
-                        const p2 = [flattened[i2], flattened[i2 + 1]];
-
-                        // Get subdivided points
-                        const subdividedPoints = subdivideTriangle(p0, p1, p2, subdivisionDepth);
-
-                        // Convert each subdivided point to 3D sphere positions
-                        subdividedPoints.forEach(point => {
-                            const lon = THREE.MathUtils.degToRad(point[0]);
-                            const lat = THREE.MathUtils.degToRad(point[1]);
-
-                            const x = radius * Math.cos(lat) * Math.cos(-lon);
-                            const y = radius * Math.sin(lat);
-                            const z = radius * Math.cos(lat) * Math.sin(-lon);
-
-                            subdividedPositions.push(x, y, z);
-                        });
-                    }
-
-                    // Create a new BufferGeometry with subdivided positions
-                    const geometry = new THREE.BufferGeometry();
-                    geometry.setAttribute(
-                        'position',
-                        new THREE.Float32BufferAttribute(subdividedPositions, 3)
-                    );
-
-                    // Compute normals for smooth shading
-                    geometry.computeVertexNormals();
-
-                    // Create mesh with slight outward offset
-                    const fillMesh = new THREE.Mesh(geometry, countryMaterial);
-                    fillMesh.scale.multiplyScalar(1.005); // Avoid z-fighting
-
-                    fillGroup.add(fillMesh);
-                });
-            });
-
-            scene.add(fillGroup);
-        }
-    });
-};
 
 // Load GeoJSON and create outlines
 let countryMeshes = [];
-fetch('/assets/country_shapes.geojson')
+fetch('/assets/countries.geo.json')
     .then(res => res.json())
     .then(geojson => {
         countryMeshes = createCountryOutlines(geojson, sphereRadius * 1.01);
-        // Add filled countries (USA, China, Russia)
-        createFilledCountries(geojson, sphereRadius, ['US', 'CN', 'RU']);
     })
     .catch(err => {
         console.error('Error loading country data:', err);
@@ -315,22 +200,19 @@ fetch('/assets/country_shapes.geojson')
         scene.add(new THREE.Mesh(testGeometry, testMaterial));
     });
 
-// Hover handling
+// Hover handling (unchanged)
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let hoveredCountry = null;
-const elevationAmount = 0.01; // Reduced elevation amount (was 0.1)
+const elevationAmount = 0.01;
 const hoverColor = new THREE.Color(0xFFD700);
 const normalColor = new THREE.Color(0xE6E6FA);
-// Create a temp vector for calculations
 const tempSphereIntersection = new THREE.Vector3();
 
-// New helper function to determine if a point is inside a country's polygon on a sphere
 function isPointInCountry(point, country, radius) {
     const pointLon = Math.atan2(point.z, point.x);
     const pointLat = Math.asin(point.y / radius);
 
-    // Convert country outlines to spherical coordinates
     for (const line of country.userData.lines) {
         const positions = line.geometry.attributes.originalPosition;
         const polygonPoints = [];
@@ -344,7 +226,6 @@ function isPointInCountry(point, country, radius) {
             polygonPoints.push([lon, lat]);
         }
 
-        // Use point-in-polygon algorithm with spherical coordinates
         if (pointInPolygonSpherical([pointLon, pointLat], polygonPoints)) {
             return true;
         }
@@ -353,9 +234,7 @@ function isPointInCountry(point, country, radius) {
     return false;
 }
 
-// Spherical point-in-polygon algorithm
 function pointInPolygonSpherical(point, polygon) {
-    // Raycasting algorithm adapted for spherical coordinates
     let inside = false;
     const [x, y] = point;
 
@@ -363,7 +242,6 @@ function pointInPolygonSpherical(point, polygon) {
         const [xi, yi] = polygon[i];
         const [xj, yj] = polygon[j];
 
-        // Handle longitude wrapping
         const xii = xi;
         const xjj = xj;
         let x0 = xii, x1 = xjj;
@@ -375,7 +253,6 @@ function pointInPolygonSpherical(point, polygon) {
         const intersect = ((yi > y) !== (yj > y)) &&
             (x < (xjj - xii) * (y - yi) / (yj - yi) + xii);
 
-        // Handle anti-meridian crossing
         if (x1 - x0 > Math.PI) {
             const intersect2 = ((yi > y) !== (yj > y)) &&
                 (x + 2*Math.PI < (xjj - xii) * (y - yi) / (yj - yi) + xii);
@@ -393,14 +270,11 @@ function pointInPolygonSpherical(point, polygon) {
     return inside;
 }
 
-// Updated hover detection
 function handlePointerMove(event) {
-    // Get mouse coordinates
     const rect = renderer.domElement.getBoundingClientRect();
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-    // Raycast to find sphere intersection
     raycaster.setFromCamera(mouse, camera);
     const sphereIntersects = raycaster.intersectObject(sphere);
 
@@ -412,7 +286,6 @@ function handlePointerMove(event) {
     const intersection = sphereIntersects[0].point;
     let newHoveredCountry = null;
 
-    // Check all countries (optimized by checking only potentially visible ones)
     const visibleCountries = [];
     countryMeshes.forEach(country => {
         if (isCountryVisible(country, camera)) {
@@ -420,13 +293,11 @@ function handlePointerMove(event) {
         }
     });
 
-    // Sort by distance to camera for better performance (check closer ones first)
     visibleCountries.sort((a, b) => {
         return a.userData.center.distanceTo(camera.position) -
             b.userData.center.distanceTo(camera.position);
     });
 
-    // Check each country for containment
     for (const country of visibleCountries) {
         if (isPointInCountry(intersection, country, sphereRadius * 1.01)) {
             newHoveredCountry = country;
@@ -434,14 +305,12 @@ function handlePointerMove(event) {
         }
     }
 
-    // Handle hover state changes
     if (hoveredCountry !== newHoveredCountry) {
         if (hoveredCountry) resetHoveredCountry();
         if (newHoveredCountry) {
             hoveredCountry = newHoveredCountry;
             hoveredCountry.userData.hovered = true;
 
-            // Apply elevation effect
             hoveredCountry.userData.lines.forEach(line => {
                 const positionAttr = line.geometry.attributes.position;
                 const originalPositions = line.geometry.attributes.originalPosition;
@@ -469,9 +338,7 @@ function handlePointerMove(event) {
     }
 }
 
-// Helper to check if country is potentially visible
 function isCountryVisible(country, camera) {
-    // Simple frustum check using the country's center
     const center = country.userData.center.clone();
     center.project(camera);
 
@@ -514,10 +381,8 @@ window.addEventListener('click', handleClick);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
-
-// Set zoom limits
-controls.minDistance = sphereRadius * 1.2;  // Minimum distance (can't zoom in closer than this)
-controls.maxDistance = sphereRadius * 10;   // Maximum distance (can't zoom out farther than this)
+controls.minDistance = sphereRadius * 1.2;
+controls.maxDistance = sphereRadius * 10;
 
 // Animation loop
 function animate() {
